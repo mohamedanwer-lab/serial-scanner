@@ -168,7 +168,16 @@
 const SHEET_ID = '1066Y4qL4_Ik9ZvLUEn_jicZ9oyWJA2VwA8wl6E7GI-Q';
 // Try multiple possible sheet names in order
 const SHEET_NAMES = ['Serial%20soh', 'Serial%20SOH', 'Serial%20Soh', 'serial%20soh', 'Serial%20Soh%20', 'SerialSoh'];
-let CSV_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Serial%20soh`;
+// Build URL helper - use export format which is more reliable
+function buildUrl(sheetName) {
+  // gid=0 is the first sheet; we use sheet name param for named sheets
+  return `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${sheetName}`;
+}
+
+// Also try direct export as fallback
+function buildExportUrl(gid) {
+  return `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=${gid}`;
+}
 
 // ── STATE ─────────────────────────────────────────────────────────────────────
 let allRows    = [];
@@ -200,7 +209,7 @@ async function loadFromSheets() {
   let lastErr = '';
 
   for (const sheetName of SHEET_NAMES) {
-    const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${sheetName}`;
+    const url = buildUrl(sheetName);
     try {
       const res  = await fetch(url);
       if (!res.ok) { lastErr = 'HTTP ' + res.status; continue; }
@@ -244,42 +253,49 @@ async function loadFromSheets() {
 
 // ── CSV PARSE ─────────────────────────────────────────────────────────────────
 function parseCSV(text) {
+  // Normalize line endings
   text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  
+  // Split respecting quoted fields
+  function splitRow(line) {
+    const fields = [];
+    let field = '', inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (inQ) {
+        if (ch === '"' && line[i+1] === '"') { field += '"'; i++; }
+        else if (ch === '"') { inQ = false; }
+        else { field += ch; }
+      } else {
+        if (ch === '"') { inQ = true; }
+        else if (ch === ',') { fields.push(field.trim()); field = ''; }
+        else { field += ch; }
+      }
+    }
+    fields.push(field.trim());
+    return fields;
+  }
+
+  // Split into lines respecting quoted newlines
   const lines = [];
   let cur = '', inQ = false;
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
-    if (ch === '"') {
-      if (inQ && text[i+1] === '"') { cur += '"'; i++; }
-      else inQ = !inQ;
-    } else if (ch === '\n' && !inQ) {
-      lines.push(cur); cur = ''; 
-    } else { cur += ch; }
+    if (ch === '"') { inQ = !inQ; cur += ch; }
+    else if (ch === '\n' && !inQ) { if (cur.trim()) lines.push(cur); cur = ''; }
+    else { cur += ch; }
   }
   if (cur.trim()) lines.push(cur);
 
-  const nonEmpty = lines.filter(l => l.trim());
-  if (nonEmpty.length < 2) return [];
+  if (lines.length < 2) return [];
 
-  function splitRow(line) {
-    const fields = []; let field = '', q = false;
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      if (ch === '"') {
-        if (q && line[i+1] === '"') { field += '"'; i++; }
-        else q = !q;
-      } else if (ch === ',' && !q) { fields.push(field); field = ''; }
-      else field += ch;
-    }
-    fields.push(field);
-    return fields.map(f => f.trim());
-  }
+  const headers = splitRow(lines[0]);
+  if (!headers.length || headers.every(h => !h)) return [];
 
-  const headers = splitRow(nonEmpty[0]);
   const rows = [];
-  for (let i = 1; i < nonEmpty.length; i++) {
-    const cols = splitRow(nonEmpty[i]);
-    if (cols.length < 2) continue;
+  for (let i = 1; i < lines.length; i++) {
+    const cols = splitRow(lines[i]);
+    if (cols.every(c => !c)) continue;
     const obj = {};
     headers.forEach((h, idx) => { obj[h] = cols[idx] !== undefined ? cols[idx] : ''; });
     rows.push(obj);
