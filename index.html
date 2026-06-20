@@ -170,8 +170,14 @@ const SHEET_ID = '1066Y4qL4_Ik9ZvLUEn_jicZ9oyWJA2VwA8wl6E7GI-Q';
 const SHEET_NAMES = ['Serial%20soh', 'Serial%20SOH', 'Serial%20Soh', 'serial%20soh'];
 
 function buildUrl(sheetName) {
-  // Use JSON format instead of CSV to avoid parsing issues with commas in cell values
   return `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${sheetName}`;
+}
+
+// Build a query URL that fetches only rows matching a specific barcode
+function buildQueryUrl(sheetName, barcode) {
+  // Column D = BARCODE in this sheet (SELLER NAME, SELLER SKU CODE, SKU NAME, BARCODE, LOCATION BARCODE)
+  const q = encodeURIComponent(`select * where D='${barcode.replace(/'/g, "\\'")}'`);
+  return `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${sheetName}&tq=${q}`;
 }
 
 // Parse Google Sheets JSON response (wrapped in google.visualization.Query.setResponse(...))
@@ -228,22 +234,23 @@ const syncIcon     = document.getElementById('sync-icon');
 const lastSync     = document.getElementById('last-sync');
 
 // ── LOAD FROM SHEETS ──────────────────────────────────────────────────────────
+let validSheetName = null; // Store the working sheet name
+
 async function loadFromSheets() {
   setStatus('جاري التحديث من Google Sheets…', '');
   syncBtn.classList.add('loading');
   syncIcon.classList.add('spinning');
   skuInput.disabled = true;
 
-  let rows = [];
   let lastErr = '';
 
+  // Just validate the sheet exists and has right columns - load first 10 rows only
   for (const sheetName of SHEET_NAMES) {
-    const url = buildUrl(sheetName);
+    const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${sheetName}&tq=${encodeURIComponent('select * limit 10')}`;
     try {
       const res  = await fetch(url);
       if (!res.ok) { lastErr = 'HTTP ' + res.status; continue; }
       const text = await res.text();
-      // Check if response is error HTML
       if (text.trim().startsWith('<!')) { lastErr = 'اسم الشيت غلط'; continue; }
       let parsed;
       try { parsed = parseGVizJSON(text); } catch(e) { lastErr = e.message; continue; }
@@ -253,23 +260,20 @@ async function loadFromSheets() {
         lastErr = `مفيش عمود BARCODE — الأعمدة: ${cols}`;
         continue;
       }
-      rows = parsed;
+      validSheetName = sheetName;
       break;
     } catch(e) { lastErr = e.message; }
   }
 
   try {
-    if (!rows.length) throw new Error(lastErr || 'مش قادر يوصل للشيت');
-
-    allRows = rows;
-    const uniq = new Set(rows.map(r => r['BARCODE']).filter(Boolean)).size;
-    setStatus(`✓ ${rows.length.toLocaleString()} صف | ${uniq.toLocaleString()} باركود`, 'success');
+    if (!validSheetName) throw new Error(lastErr || 'مش قادر يوصل للشيت');
+    setStatus(`✓ جاهز — اسكان الباركود`, 'success');
     lastSync.textContent = 'آخر تحديث: ' + new Date().toLocaleTimeString('ar-EG');
     skuInput.disabled = false;
     if (!currentSKU) {
       setGrid(`<div class="empty-state"><i class="ti ti-scan"></i><h3>امسح باركود الآيتم</h3><p>السكانر هيجيبلك الـ SKU واللوكيشنات أوتوماتيك</p></div>`);
     } else {
-      renderResults();
+      runSearch(currentSKU);
     }
   } catch (err) {
     setStatus('خطأ: ' + err.message, 'error');
@@ -345,19 +349,12 @@ let scanTimer = null;
 skuInput.addEventListener('input', function() {
   const q = this.value.trim();
   clearBtn.style.display = q ? 'block' : 'none';
-  if (!q || !allRows.length) { suggestBox.style.display = 'none'; return; }
-  // Reset timer on every keystroke — fires only after typing stops
+  if (!q || !validSheetName) { suggestBox.style.display = 'none'; return; }
   clearTimeout(scanTimer);
   scanTimer = setTimeout(() => {
-    const exactMatch = allRows.find(r => (r['BARCODE'] || '').trim() === q);
-    if (exactMatch) {
-      suggestBox.style.display = 'none';
-      runSearch(q);
-      return;
-    }
-    clearTimeout(suggTimer);
-    suggTimer = setTimeout(() => showSuggestions(q), 0);
-  }, 500); // 500ms — enough time for scanner to finish sending all chars
+    suggestBox.style.display = 'none';
+    showSuggestions(q);
+  }, 500);
 });
 
 // Use keyup so the value is fully updated before we read it
@@ -382,82 +379,87 @@ document.addEventListener('click', function(e) {
   if (!e.target.closest('.search-wrap')) suggestBox.style.display = 'none';
 });
 
-function showSuggestions(q) {
-  const ql = q.toLowerCase();
-  const seen = new Set();
-  const matches = [];
-  for (const row of allRows) {
-    const barcode = (row['BARCODE'] || '').trim();
-    if (!barcode || seen.has(barcode)) continue;
-    if (barcode.toLowerCase().includes(ql)) {
+async function showSuggestions(q) {
+  if (!validSheetName || !q) { suggestBox.style.display = 'none'; return; }
+  try {
+    // Search BARCODE column contains the query
+    const tq = encodeURIComponent(`select * where D contains '${q.replace(/'/g,"\\'")}' limit 10`);
+    const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${validSheetName}&tq=${tq}`;
+    const res = await fetch(url);
+    if (!res.ok) { suggestBox.style.display = 'none'; return; }
+    const text = await res.text();
+    const rows = parseGVizJSON(text);
+    const seen = new Set();
+    const matches = [];
+    for (const row of rows) {
+      const barcode = (row['BARCODE'] || '').trim();
+      if (!barcode || seen.has(barcode)) continue;
       seen.add(barcode);
-      const sku = row['SELLER SKU CODE'] || '';
-      const name = row['SKU NAME'] || '';
-      matches.push({ barcode, sku, name });
-      if (matches.length >= 10) break;
+      matches.push({ barcode, sku: row['SELLER SKU CODE'] || '', name: row['SKU NAME'] || '' });
     }
-  }
-  if (!matches.length) { suggestBox.style.display = 'none'; return; }
-  suggestBox.innerHTML = matches.map(m =>
-    `<div class="suggestion-item" data-barcode="${escHtml(m.barcode)}">
-       <span class="sugg-sku">${escHtml(m.barcode)}</span>
-       <span class="sugg-name">SKU: ${escHtml(m.sku)} — ${escHtml(m.name)}</span>
-     </div>`
-  ).join('');
-  suggestBox.style.display = 'block';
-  suggestBox.querySelectorAll('.suggestion-item').forEach(el => {
-    el.addEventListener('mousedown', function(e) {
-      e.preventDefault();
-      skuInput.value = this.dataset.barcode;
-      clearBtn.style.display = 'block';
-      suggestBox.style.display = 'none';
-      runSearch(this.dataset.barcode);
+    if (!matches.length) { suggestBox.style.display = 'none'; return; }
+    suggestBox.innerHTML = matches.map(m =>
+      `<div class="suggestion-item" data-barcode="${escHtml(m.barcode)}">
+         <span class="sugg-sku">${escHtml(m.barcode)}</span>
+         <span class="sugg-name">SKU: ${escHtml(m.sku)} — ${escHtml(m.name)}</span>
+       </div>`
+    ).join('');
+    suggestBox.style.display = 'block';
+    suggestBox.querySelectorAll('.suggestion-item').forEach(el => {
+      el.addEventListener('mousedown', function(e) {
+        e.preventDefault();
+        skuInput.value = this.dataset.barcode;
+        clearBtn.style.display = 'block';
+        suggestBox.style.display = 'none';
+        runSearch(this.dataset.barcode);
+      });
     });
-  });
+  } catch(e) { suggestBox.style.display = 'none'; }
 }
 
 // Normalize barcode value - handle scientific notation from Google Sheets
 function normalizeBarcode(val) {
   if (!val) return '';
   val = String(val).trim();
-  // Handle scientific notation e.g. 6.22301E+12
   if (/^[\d.]+[eE][+\-]?\d+$/.test(val)) {
     try { val = Number(val).toFixed(0); } catch(e) {}
   }
   return val;
 }
 
-function runSearch(barcode) {
-  if (!barcode || !allRows.length) return;
-
+async function runSearch(barcode) {
+  if (!barcode || !validSheetName) return;
   const q = normalizeBarcode(barcode);
 
-  // Primary: search BARCODE column (normalize both sides)
-  let matchedRow = allRows.find(r => normalizeBarcode(r['BARCODE']) === q);
+  setGrid(`<div class="empty-state"><i class="ti ti-loader" style="animation:spin 1s linear infinite"></i><h3>جاري البحث…</h3></div>`);
+  hideMetaUI();
 
-  // Fallback: search all columns
-  if (!matchedRow) {
-    matchedRow = allRows.find(r =>
-      Object.values(r).some(v => normalizeBarcode(v) === q)
-    );
-  }
+  try {
+    // Query directly by BARCODE column (column D)
+    const queryUrl = buildQueryUrl(validSheetName, q);
+    const res = await fetch(queryUrl);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const text = await res.text();
+    const rows = parseGVizJSON(text);
 
-  if (!matchedRow) {
-    currentSKU = null;
+    allRows = rows; // store current result set
+
+    if (!rows.length) {
+      currentSKU = null;
+      hideMetaUI();
+      setGrid(`<div class="empty-state"><i class="ti ti-mood-sad"></i><h3>مش لاقي الباركود ده</h3><p>"${escHtml(barcode)}" مش موجود في البيانات</p></div>`);
+      return;
+    }
+
+    currentSKU = (rows[0]['SELLER SKU CODE'] || '').trim();
     activeType = 'All';
     document.querySelectorAll('.filter-pill').forEach(p => {
       p.className = 'filter-pill' + (p.dataset.type === 'All' ? ' active' : '');
     });
-    hideMetaUI();
-    setGrid(`<div class="empty-state"><i class="ti ti-mood-sad"></i><h3>مش لاقي الباركود ده</h3><p>"${escHtml(barcode)}" مش موجود في البيانات</p></div>`);
-    return;
+    renderResults();
+  } catch(err) {
+    setGrid(`<div class="empty-state"><i class="ti ti-wifi-off"></i><h3>خطأ في البحث</h3><p>${escHtml(err.message)}</p></div>`);
   }
-  currentSKU = (matchedRow['SELLER SKU CODE'] || '').trim();
-  activeType = 'All';
-  document.querySelectorAll('.filter-pill').forEach(p => {
-    p.className = 'filter-pill' + (p.dataset.type === 'All' ? ' active' : '');
-  });
-  renderResults();
 }
 
 // ── RENDER ────────────────────────────────────────────────────────────────────
