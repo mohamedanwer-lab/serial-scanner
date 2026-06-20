@@ -134,7 +134,9 @@
 
   <div class="summary-cards" id="summary-cards" style="display:none">
     <div class="metric-card"><div class="metric-label">لوكيشنات</div><div class="metric-value neutral" id="m-locs">0</div></div>
-    <div class="metric-card"><div class="metric-label">إجمالي السيريالات</div><div class="metric-value green" id="m-total">0</div></div>
+    <div class="metric-card"><div class="metric-label">Pass</div><div class="metric-value green" id="m-pass">0</div></div>
+    <div class="metric-card"><div class="metric-label">Fail</div><div class="metric-value red" id="m-fail">0</div></div>
+    <div class="metric-card"><div class="metric-label">Expired</div><div class="metric-value amber" id="m-exp">0</div></div>
   </div>
 
   <div class="sku-info-bar" id="sku-info-bar">
@@ -166,18 +168,7 @@
 <script>
 // ── CONFIG ────────────────────────────────────────────────────────────────────
 const SHEET_ID = '1066Y4qL4_Ik9ZvLUEn_jicZ9oyWJA2VwA8wl6E7GI-Q';
-// Try multiple possible sheet names in order
-const SHEET_NAMES = ['Serial%20soh', 'Serial%20SOH', 'Serial%20Soh', 'serial%20soh', 'Serial%20Soh%20', 'SerialSoh'];
-// Build URL helper - use export format which is more reliable
-function buildUrl(sheetName) {
-  // gid=0 is the first sheet; we use sheet name param for named sheets
-  return `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${sheetName}`;
-}
-
-// Also try direct export as fallback
-function buildExportUrl(gid) {
-  return `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=${gid}`;
-}
+let CSV_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Serial soh`;
 
 // ── STATE ─────────────────────────────────────────────────────────────────────
 let allRows    = [];
@@ -209,7 +200,7 @@ async function loadFromSheets() {
   let lastErr = '';
 
   for (const sheetName of SHEET_NAMES) {
-    const url = buildUrl(sheetName);
+    const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${sheetName}`;
     try {
       const res  = await fetch(url);
       if (!res.ok) { lastErr = 'HTTP ' + res.status; continue; }
@@ -218,11 +209,7 @@ async function loadFromSheets() {
       if (text.trim().startsWith('<!')) { lastErr = 'اسم الشيت غلط'; continue; }
       const parsed = parseCSV(text);
       if (!parsed.length) { lastErr = 'الشيت فاضي'; continue; }
-      if (!parsed[0].hasOwnProperty('BARCODE')) { 
-        const cols = Object.keys(parsed[0]).join(' | ');
-        lastErr = `مفيش عمود BARCODE — الأعمدة الموجودة: ${cols}`; 
-        continue; 
-      }
+      if (!parsed[0].hasOwnProperty('BARCODE')) { lastErr = 'مفيش عمود BARCODE'; continue; }
       rows = parsed;
       CSV_URL = url;
       break;
@@ -253,51 +240,16 @@ async function loadFromSheets() {
 
 // ── CSV PARSE ─────────────────────────────────────────────────────────────────
 function parseCSV(text) {
-  // Normalize line endings
-  text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-  
-  // Split respecting quoted fields
-  function splitRow(line) {
-    const fields = [];
-    let field = '', inQ = false;
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      if (inQ) {
-        if (ch === '"' && line[i+1] === '"') { field += '"'; i++; }
-        else if (ch === '"') { inQ = false; }
-        else { field += ch; }
-      } else {
-        if (ch === '"') { inQ = true; }
-        else if (ch === ',') { fields.push(field.trim()); field = ''; }
-        else { field += ch; }
-      }
-    }
-    fields.push(field.trim());
-    return fields;
-  }
-
-  // Split into lines respecting quoted newlines
-  const lines = [];
-  let cur = '', inQ = false;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    if (ch === '"') { inQ = !inQ; cur += ch; }
-    else if (ch === '\n' && !inQ) { if (cur.trim()) lines.push(cur); cur = ''; }
-    else { cur += ch; }
-  }
-  if (cur.trim()) lines.push(cur);
-
+  const sep   = (text.match(/\t/g)||[]).length > (text.match(/,/g)||[]).length ? '\t' : ',';
+  const lines = text.replace(/\r/g,'').split('\n').filter(l => l.trim());
   if (lines.length < 2) return [];
-
-  const headers = splitRow(lines[0]);
-  if (!headers.length || headers.every(h => !h)) return [];
-
+  const headers = lines[0].split(sep).map(h => h.trim().replace(/^"|"$/g,''));
   const rows = [];
   for (let i = 1; i < lines.length; i++) {
-    const cols = splitRow(lines[i]);
-    if (cols.every(c => !c)) continue;
+    const cols = lines[i].split(sep).map(c => c.trim().replace(/^"|"$/g,''));
+    if (cols.length < 4) continue;
     const obj = {};
-    headers.forEach((h, idx) => { obj[h] = cols[idx] !== undefined ? cols[idx] : ''; });
+    headers.forEach((h,idx) => { obj[h] = cols[idx] !== undefined ? cols[idx] : ''; });
     rows.push(obj);
   }
   return rows;
@@ -408,16 +360,20 @@ function renderResults() {
     return;
   }
   const filtered = activeType === 'All' ? matched : matched.filter(r => (r['LOCATION TYPE']||'') === activeType);
+  const totalPass = sum(filtered,'LOCATION PASS QUANTITY');
+  const totalFail = sum(filtered,'LOCATION FAIL QUANTITY');
+  const totalExp  = sum(filtered,'LOCATION EXPIRED QUANTITY');
   const locs = buildLocs(filtered);
-  const totalSerials = filtered.length;
 
   document.getElementById('sku-name-display').textContent  = matched[0]['SKU NAME'] || '—';
   document.getElementById('sku-code-display').textContent  = 'SKU: ' + currentSKU;
   document.getElementById('sku-seller-display').textContent = 'Seller: ' + (matched[0]['SELLER NAME'] || '—');
   skuInfoBar.style.display = 'block';
 
-  document.getElementById('m-locs').textContent  = locs.size;
-  document.getElementById('m-total').textContent = totalSerials.toLocaleString();
+  document.getElementById('m-locs').textContent = locs.size;
+  document.getElementById('m-pass').textContent = totalPass.toLocaleString();
+  document.getElementById('m-fail').textContent = totalFail.toLocaleString();
+  document.getElementById('m-exp').textContent  = totalExp.toLocaleString();
   summaryCards.style.display = 'grid';
   filterBar.style.display = 'flex';
 
@@ -431,7 +387,9 @@ function renderResults() {
     return `<div class="loc-card">
       <div class="loc-barcode">${escHtml(l.barcode)}</div>
       <span class="loc-type-badge ${tc}">${escHtml(l.type||'Unknown')}</span>
-      <div class="qty-row"><span class="qty-label">عدد السيريالات</span><span class="qty-val green">${l.count.toLocaleString()}</span></div>
+      <div class="qty-row"><span class="qty-label">Pass</span><span class="qty-val green">${l.pass.toLocaleString()}</span></div>
+      <div class="qty-row"><span class="qty-label">Fail</span><span class="qty-val red">${l.fail.toLocaleString()}</span></div>
+      <div class="qty-row"><span class="qty-label">Expired</span><span class="qty-val amber">${l.exp.toLocaleString()}</span></div>
     </div>`;
   }).join('');
   setGrid(cards);
@@ -460,8 +418,11 @@ function buildLocs(rows) {
   for (const r of rows) {
     const key = (r['LOCATION BARCODE']||'').trim();
     if (!key) continue;
-    if (!map.has(key)) map.set(key, {barcode:key, type:r['LOCATION TYPE']||'', count:0});
-    map.get(key).count++;
+    if (!map.has(key)) map.set(key, {barcode:key, type:r['LOCATION TYPE']||'', pass:0, fail:0, exp:0});
+    const l = map.get(key);
+    l.pass += parseInt(r['LOCATION PASS QUANTITY'])||0;
+    l.fail += parseInt(r['LOCATION FAIL QUANTITY'])||0;
+    l.exp  += parseInt(r['LOCATION EXPIRED QUANTITY'])||0;
   }
   return map;
 }
