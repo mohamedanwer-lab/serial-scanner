@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Serial SOH Scanner</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/dist/tabler-icons.min.css" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #ffffff;
+      --bg-secondary: #f5f5f4;
+      --bg-tertiary: #f0efed;
+      --text-primary: #1a1a19;
+      --text-secondary: #6b6b68;
+      --text-tertiary: #9b9b97;
+      --border: rgba(0,0,0,0.12);
+      --border-md: rgba(0,0,0,0.22);
+      --radius-md: 8px;
+      --radius-lg: 12px;
+      --blue: #185FA5;
+      --blue-bg: #E6F1FB;
+      --blue-text: #0C447C;
+      --green-bg: #EAF3DE;
+      --green-text: #3B6D11;
+      --red-bg: #FCEBEB;
+      --red-text: #A32D2D;
+      --info-bg: #E6F1FB;
+      --info-text: #0C447C;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #1c1c1a;
+        --bg-secondary: #252523;
+        --bg-tertiary: #2e2e2b;
+        --text-primary: #f0efed;
+        --text-secondary: #a0a09c;
+        --text-tertiary: #6b6b68;
+        --border: rgba(255,255,255,0.1);
+        --border-md: rgba(255,255,255,0.2);
+        --blue: #378ADD;
+        --blue-bg: #042C53;
+        --blue-text: #B5D4F4;
+        --green-bg: #173404;
+        --green-text: #C0DD97;
+        --red-bg: #501313;
+        --red-text: #F7C1C1;
+        --info-bg: #042C53;
+        --info-text: #B5D4F4;
+      }
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+      min-height: 100vh;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 2rem 1rem;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 600px;
+    }
+
+    /* Header */
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 1.5rem;
+    }
+    .header-icon {
+      width: 42px;
+      height: 42px;
+      background: var(--bg);
+      border-radius: var(--radius-md);
+      border: 0.5px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .header-icon i { font-size: 22px; color: var(--blue); }
+    .header-title { font-size: 18px; font-weight: 600; color: var(--text-primary); }
+    .header-sub { font-size: 13px; color: var(--text-secondary); margin-top: 2px; }
+
+    /* Config */
+    .config-card {
+      background: var(--bg);
+      border: 0.5px solid var(--border);
+      border-radius: var(--radius-lg);
+      margin-bottom: 1rem;
+      overflow: hidden;
+    }
+    .config-toggle {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 14px 16px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      user-select: none;
+    }
+    .config-toggle:hover { color: var(--text-primary); }
+    .config-toggle i { font-size: 16px; }
+    .cfg-chevron { margin-right: auto; transition: transform 0.2s; }
+    .config-body {
+      display: none;
+      padding: 0 16px 16px;
+      border-top: 0.5px solid var(--border);
+    }
+    .config-body.open { display: block; }
+
+    .field { margin-top: 12px; }
+    .field label {
+      display: block;
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin-bottom: 5px;
+      font-weight: 500;
+    }
+    .field input {
+      width: 100%;
+      height: 36px;
+      padding: 0 10px;
+      font-size: 13px;
+      border: 0.5px solid var(--border-md);
+      border-radius: var(--radius-md);
+      background: var(--bg-secondary);
+      color: var(--text-primary);
+      outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+      font-family: inherit;
+    }
+    .field input:focus {
+      border-color: var(--blue);
+      box-shadow: 0 0 0 3px rgba(55,138,221,0.15);
+    }
+
+    .col-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr 1fr;
+      gap: 8px;
+      margin-top: 4px;
+    }
+    .col-item label { font-size: 11px; color: var(--text-tertiary); margin-bottom: 3px; }
+    .col-item input { text-align: center; }
+
+    .config-note {
+      font-size: 11px;
+      color: var(--text-tertiary);
+      margin-top: 10px;
+      line-height: 1.5;
+    }
+    .config-note a { color: var(--blue); text-decoration: none; }
+    .config-note a:hover { text-decoration: underline; }
+
+    .btn-row { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; }
+    .btn-sm {
+      height: 34px;
+      padding: 0 14px;
+      font-size: 13px;
+      font-weight: 500;
+      border-radius: var(--radius-md);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: background 0.12s, transform 0.1s;
+    }
+    .btn-sm:active { transform: scale(0.97); }
+    .btn-outline {
+      background: transparent;
+      border: 0.5px solid var(--border-md);
+      color: var(--text-primary);
+    }
+    .btn-outline:hover { background: var(--bg-secondary); }
+    .btn-primary {
+      background: var(--blue);
+      border: none;
+      color: #fff;
+    }
+    .btn-primary:hover { filter: brightness(1.1); }
+
+    /* Scanner */
+    .scan-card {
+      background: var(--bg);
+      border: 0.5px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 1.25rem;
+      margin-bottom: 1rem;
+    }
+    .scan-row { display: flex; gap: 8px; }
+    .scan-input {
+      flex: 1;
+      height: 48px;
+      padding: 0 16px;
+      font-size: 16px;
+      border: 1.5px solid var(--border-md);
+      border-radius: var(--radius-md);
+      background: var(--bg-secondary);
+      color: var(--text-primary);
+      outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+      font-family: inherit;
+    }
+    .scan-input:focus {
+      border-color: var(--blue);
+      box-shadow: 0 0 0 3px rgba(55,138,221,0.15);
+      background: var(--bg);
+    }
+    .scan-input::placeholder { color: var(--text-tertiary); }
+
+    .btn-scan {
+      height: 48px;
+      padding: 0 20px;
+      font-size: 15px;
+      font-weight: 500;
+      background: var(--blue);
+      color: #fff;
+      border: none;
+      border-radius: var(--radius-md);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transition: filter 0.15s, transform 0.1s;
+      white-space: nowrap;
+    }
+    .btn-scan:hover { filter: brightness(1.1); }
+    .btn-scan:active { transform: scale(0.97); }
+    .btn-scan i { font-size: 20px; }
+
+    /* Status */
+    .status-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      border-radius: var(--radius-md);
+      font-size: 13px;
+      margin-top: 12px;
+    }
+    .status-bar i { font-size: 16px; flex-shrink: 0; }
+    .s-idle { background: var(--bg-secondary); color: var(--text-secondary); }
+    .s-loading { background: var(--info-bg); color: var(--info-text); }
+    .s-success { background: var(--green-bg); color: var(--green-text); }
+    .s-error { background: var(--red-bg); color: var(--red-text); }
+    .s-info { background: var(--info-bg); color: var(--info-text); }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spin { animation: spin 0.8s linear infinite; display: inline-block; }
+
+    /* Result */
+    .result-card {
+      background: var(--bg);
+      border: 0.5px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 1.25rem;
+      margin-bottom: 1rem;
+      display: none;
+    }
+    .result-card.visible { display: block; }
+
+    .result-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 14px;
+      padding-bottom: 12px;
+      border-bottom: 0.5px solid var(--border);
+      gap: 12px;
+    }
+    .res-sku-name { font-size: 15px; font-weight: 600; color: var(--text-primary); }
+    .res-barcode { font-size: 11px; color: var(--text-tertiary); font-family: 'SF Mono', 'Fira Code', monospace; margin-top: 3px; }
+    .badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: var(--radius-md);
+      white-space: nowrap;
+      background: var(--blue-bg);
+      color: var(--blue-text);
+      flex-shrink: 0;
+    }
+
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 10px;
+    }
+    .metric {
+      background: var(--bg-secondary);
+      border-radius: var(--radius-md);
+      padding: 12px;
+    }
+    .metric-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-tertiary);
+      margin-bottom: 6px;
+    }
+    .metric-value {
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text-primary);
+      word-break: break-all;
+    }
+    .metric-value.accent { font-size: 24px; color: var(--blue); }
+
+    /* History */
+    .history-card {
+      background: var(--bg);
+      border: 0.5px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 1.25rem;
+      display: none;
+    }
+    .history-card.visible { display: block; }
+    .history-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+    .history-title {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-tertiary);
+    }
+    .btn-clear {
+      font-size: 12px;
+      color: var(--text-tertiary);
+      background: none;
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 8px;
+      border-radius: var(--radius-md);
+    }
+    .btn-clear:hover { background: var(--bg-secondary); color: var(--text-primary); }
+
+    .history-list { display: flex; flex-direction: column; gap: 6px; }
+    .history-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 12px;
+      background: var(--bg-secondary);
+      border-radius: var(--radius-md);
+      cursor: pointer;
+      transition: background 0.1s;
+      gap: 8px;
+    }
+    .history-item:hover {
+      background: var(--bg-tertiary);
+      border: 0.5px solid var(--border-md);
+    }
+    .h-bc {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-primary);
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .h-name {
+      font-size: 12px;
+      color: var(--text-secondary);
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      text-align: center;
+    }
+    .h-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+    .h-loc { font-size: 12px; color: var(--text-tertiary); }
+    .h-qty { font-size: 13px; font-weight: 600; color: var(--blue); }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <!-- Header -->
+  <div class="header">
+    <div class="header-icon">
+      <i class="ti ti-barcode" aria-hidden="true"></i>
+    </div>
+    <div>
+      <div class="header-title">Serial SOH Scanner</div>
+      <div class="header-sub">سكان الباركود ← Seller SKU · Location · Qty</div>
+    </div>
+  </div>
+
+  <!-- Config -->
+  <div class="config-card">
+    <div class="config-toggle" onclick="toggleConfig()" role="button" aria-expanded="false" id="cfg-toggle">
+      <i class="ti ti-settings" aria-hidden="true"></i>
+      إعدادات الشيت
+      <i class="ti ti-chevron-down cfg-chevron" aria-hidden="true" id="cfg-chevron"></i>
+    </div>
+    <div class="config-body" id="cfg-body">
+
+      <div class="field">
+        <label>Sheet ID</label>
+        <input type="text" id="sheet-id" placeholder="الـ ID من رابط الشيت" />
+      </div>
+
+      <div class="field">
+        <label>Sheet Name (اسم الـ Tab)</label>
+        <input type="text" id="sheet-name" placeholder="مثال: Serial soh" />
+      </div>
+
+      <div class="field">
+        <label>Column mapping (A=1، B=2 ...)</label>
+        <div class="col-grid">
+          <div class="col-item">
+            <label>Barcode</label>
+            <input type="number" id="col-barcode" value="4" min="1" />
+          </div>
+          <div class="col-item">
+            <label>Seller SKU</label>
+            <input type="number" id="col-seller-sku" value="2" min="1" />
+          </div>
+          <div class="col-item">
+            <label>Location</label>
+            <input type="number" id="col-location" value="5" min="1" />
+          </div>
+          <div class="col-item">
+            <label>SKU Name</label>
+            <input type="number" id="col-sku" value="3" min="1" />
+          </div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Google Sheets API Key</label>
+        <input type="password" id="api-key" placeholder="AIza..." />
+        <p class="config-note">
+          محتاج API Key من
+          <a href="https://console.cloud.google.com" target="_blank">Google Cloud Console</a>
+          — ابدأ project جديد ← فعّل "Google Sheets API" ← Credentials ← Create API Key
+        </p>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn-sm btn-primary" onclick="saveConfig()">
+          <i class="ti ti-device-floppy" aria-hidden="true"></i>
+          حفظ الإعدادات
+        </button>
+        <p class="config-note" style="margin:0;">الإعدادات بتتحفظ في المتصفح</p>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Scanner -->
+  <div class="scan-card">
+    <div class="scan-row">
+      <input
+        class="scan-input"
+        type="text"
+        id="barcode-input"
+        placeholder="سكان الباركود أو اكتبه..."
+        autocomplete="off"
+        autofocus
+      />
+      <button class="btn-scan" onclick="doScan()">
+        <i class="ti ti-scan" aria-hidden="true"></i>
+        بحث
+      </button>
+    </div>
+    <div class="status-bar s-idle" id="status-bar">
+      <i class="ti ti-scan" aria-hidden="true"></i>
+      <span id="status-text">جاهز للسكان</span>
+    </div>
+  </div>
+
+  <!-- Result -->
+  <div class="result-card" id="result-card">
+    <div class="result-header">
+      <div>
+        <div class="res-sku-name" id="res-sku-name">—</div>
+        <div class="res-barcode" id="res-barcode-display">—</div>
+      </div>
+      <span class="badge" id="res-seller-sku-badge">—</span>
+    </div>
+    <div class="metrics-grid">
+      <div class="metric">
+        <div class="metric-label">Seller SKU Code</div>
+        <div class="metric-value" id="res-seller-sku">—</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Location</div>
+        <div class="metric-value" id="res-location">—</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Qty</div>
+        <div class="metric-value accent" id="res-qty">—</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- History -->
+  <div class="history-card" id="history-card">
+    <div class="history-header">
+      <span class="history-title">السكانات الأخيرة</span>
+      <button class="btn-clear" onclick="clearHistory()">
+        <i class="ti ti-trash" aria-hidden="true"></i>
+        مسح
+      </button>
+    </div>
+    <div class="history-list" id="history-list"></div>
+  </div>
+
+</div>
+
+<script>
+  // ── Config ───────────────────────────────────────────────
+  const STORAGE_KEY = 'soh_scanner_config';
+
+  let cfg = {
+    sheetId: '',
+    sheetName: 'Serial soh',
+    apiKey: '',
+    colBarcode: 4,
+    colSellerSku: 2,
+    colLocation: 5,
+    colSku: 3
+  };
+
+  let history = [];
+  let cfgOpen = false;
+
+  function loadConfig() {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) cfg = { ...cfg, ...JSON.parse(saved) };
+    } catch {}
+    document.getElementById('sheet-id').value = cfg.sheetId;
+    document.getElementById('sheet-name').value = cfg.sheetName;
+    document.getElementById('api-key').value = cfg.apiKey;
+    document.getElementById('col-barcode').value = cfg.colBarcode;
+    document.getElementById('col-seller-sku').value = cfg.colSellerSku;
+    document.getElementById('col-location').value = cfg.colLocation;
+    document.getElementById('col-sku').value = cfg.colSku;
+  }
+
+  function saveConfig() {
+    cfg.sheetId     = document.getElementById('sheet-id').value.trim();
+    cfg.sheetName   = document.getElementById('sheet-name').value.trim() || 'Serial soh';
+    cfg.apiKey      = document.getElementById('api-key').value.trim();
+    cfg.colBarcode  = parseInt(document.getElementById('col-barcode').value) || 4;
+    cfg.colSellerSku = parseInt(document.getElementById('col-seller-sku').value) || 2;
+    cfg.colLocation = parseInt(document.getElementById('col-location').value) || 5;
+    cfg.colSku      = parseInt(document.getElementById('col-sku').value) || 3;
+
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg)); } catch {}
+
+    setStatus('success', 'تم حفظ الإعدادات ✓');
+    setTimeout(() => {
+      toggleConfig(false);
+      setStatus('idle', 'جاهز للسكان');
+    }, 1200);
+  }
+
+  // ── Config toggle ─────────────────────────────────────────
+  function toggleConfig(force) {
+    cfgOpen = force !== undefined ? force : !cfgOpen;
+    document.getElementById('cfg-body').className = cfgOpen ? 'config-body open' : 'config-body';
+    document.getElementById('cfg-chevron').style.transform = cfgOpen ? 'rotate(180deg)' : '';
+    document.getElementById('cfg-toggle').setAttribute('aria-expanded', cfgOpen);
+  }
+
+  // ── Status bar ────────────────────────────────────────────
+  function setStatus(type, msg) {
+    const bar = document.getElementById('status-bar');
+    const icons = {
+      idle:    'ti-scan',
+      loading: 'ti-loader spin',
+      success: 'ti-circle-check',
+      error:   'ti-alert-circle',
+      info:    'ti-info-circle'
+    };
+    const classes = {
+      idle: 's-idle', loading: 's-loading',
+      success: 's-success', error: 's-error', info: 's-info'
+    };
+    bar.className = 'status-bar ' + (classes[type] || 's-idle');
+    bar.innerHTML = `<i class="ti ${icons[type] || 'ti-scan'}" aria-hidden="true"></i><span>${msg}</span>`;
+  }
+
+  // ── Scan ──────────────────────────────────────────────────
+  async function doScan() {
+    const input   = document.getElementById('barcode-input');
+    const barcode = input.value.trim();
+
+    if (!barcode) { setStatus('error', 'ادخل الباركود الأول'); return; }
+
+    if (!cfg.apiKey) {
+      setStatus('info', 'افتح الإعدادات وحط الـ API Key');
+      toggleConfig(true);
+      return;
+    }
+    if (!cfg.sheetId) {
+      setStatus('info', 'افتح الإعدادات وحط الـ Sheet ID');
+      toggleConfig(true);
+      return;
+    }
+
+    setStatus('loading', 'بيدور...');
+
+    try {
+      const range = encodeURIComponent(`${cfg.sheetName}!A:Z`);
+      const url   = `https://sheets.googleapis.com/v4/spreadsheets/${cfg.sheetId}/values/${range}?key=${cfg.apiKey}`;
+
+      const res  = await fetch(url);
+      const data = await res.json();
+
+      if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
+
+      const rows  = data.values || [];
+      const bcCol = cfg.colBarcode - 1;
+
+      const row = rows.find((r, i) => i > 0 && r[bcCol]?.toString().trim() === barcode);
+
+      if (!row) {
+        setStatus('error', `الباركود "${barcode}" مش موجود في الشيت`);
+        document.getElementById('result-card').className = 'result-card';
+        return;
+      }
+
+      const sellerSku = row[cfg.colSellerSku - 1] || '—';
+      const location  = row[cfg.colLocation - 1]  || '—';
+      const skuName   = row[cfg.colSku - 1]       || '—';
+
+      document.getElementById('res-sku-name').textContent        = skuName;
+      document.getElementById('res-barcode-display').textContent = barcode;
+      document.getElementById('res-seller-sku-badge').textContent = sellerSku;
+      document.getElementById('res-seller-sku').textContent      = sellerSku;
+      document.getElementById('res-location').textContent        = location;
+      document.getElementById('res-qty').textContent             = '1';
+      document.getElementById('result-card').className           = 'result-card visible';
+
+      setStatus('success', `تم ✓ — ${skuName}`);
+
+      history.unshift({ barcode, sellerSku, location, skuName });
+      if (history.length > 10) history.pop();
+      renderHistory();
+
+      input.value = '';
+      input.focus();
+
+    } catch (e) {
+      setStatus('error', e.message || 'في مشكلة في الاتصال');
+    }
+  }
+
+  // ── History ───────────────────────────────────────────────
+  function renderHistory() {
+    const card = document.getElementById('history-card');
+    const list = document.getElementById('history-list');
+    if (!history.length) { card.className = 'history-card'; return; }
+    card.className = 'history-card visible';
+    list.innerHTML = history.map((h, i) => `
+      <div class="history-item" onclick="showHistoryItem(${i})" role="button" tabindex="0">
+        <span class="h-bc">${h.barcode}</span>
+        <span class="h-name">${h.skuName}</span>
+        <span class="h-right">
+          <span class="h-loc">${h.location}</span>
+          <span class="h-qty">${h.sellerSku}</span>
+        </span>
+      </div>
+    `).join('');
+  }
+
+  function showHistoryItem(i) {
+    const h = history[i];
+    document.getElementById('res-sku-name').textContent         = h.skuName;
+    document.getElementById('res-barcode-display').textContent  = h.barcode;
+    document.getElementById('res-seller-sku-badge').textContent = h.sellerSku;
+    document.getElementById('res-seller-sku').textContent       = h.sellerSku;
+    document.getElementById('res-location').textContent         = h.location;
+    document.getElementById('res-qty').textContent              = '1';
+    document.getElementById('result-card').className            = 'result-card visible';
+    setStatus('success', `من السجل — ${h.skuName}`);
+  }
+
+  function clearHistory() {
+    history = [];
+    renderHistory();
+    setStatus('idle', 'جاهز للسكان');
+  }
+
+  // ── Init ──────────────────────────────────────────────────
+  loadConfig();
+
+  document.getElementById('barcode-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') doScan();
+  });
+</script>
+</body>
+</html>
