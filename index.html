@@ -167,16 +167,45 @@
 // ── CONFIG ────────────────────────────────────────────────────────────────────
 const SHEET_ID = '1066Y4qL4_Ik9ZvLUEn_jicZ9oyWJA2VwA8wl6E7GI-Q';
 // Try multiple possible sheet names in order
-const SHEET_NAMES = ['Serial%20soh', 'Serial%20SOH', 'Serial%20Soh', 'serial%20soh', 'Serial%20Soh%20', 'SerialSoh'];
-// Build URL helper - use export format which is more reliable
+const SHEET_NAMES = ['Serial%20soh', 'Serial%20SOH', 'Serial%20Soh', 'serial%20soh'];
+
 function buildUrl(sheetName) {
-  // gid=0 is the first sheet; we use sheet name param for named sheets
-  return `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${sheetName}`;
+  // Use JSON format instead of CSV to avoid parsing issues with commas in cell values
+  return `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${sheetName}`;
 }
 
-// Also try direct export as fallback
-function buildExportUrl(gid) {
-  return `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=${gid}`;
+// Parse Google Sheets JSON response (wrapped in google.visualization.Query.setResponse(...))
+function parseGVizJSON(text) {
+  // Strip the JSONP wrapper
+  const match = text.match(/google\.visualization\.Query\.setResponse\(([\s\S]*)\)/);
+  if (!match) throw new Error('تنسيق البيانات غلط');
+  const data = JSON.parse(match[1]);
+  if (data.status === 'error') throw new Error(data.errors?.[0]?.message || 'خطأ في البيانات');
+  const table = data.table;
+  if (!table || !table.cols || !table.rows) throw new Error('الشيت فاضي');
+
+  // Build headers from cols
+  const headers = table.cols.map(c => (c.label || c.id || '').trim());
+
+  // Build rows
+  const rows = [];
+  for (const row of table.rows) {
+    if (!row.c) continue;
+    const obj = {};
+    headers.forEach((h, i) => {
+      const cell = row.c[i];
+      let val = '';
+      if (cell) {
+        if (cell.v !== null && cell.v !== undefined) {
+          // For numbers, use formatted value (f) if available to preserve leading zeros etc
+          val = (cell.f !== undefined && cell.f !== null) ? String(cell.f) : String(cell.v);
+        }
+      }
+      obj[h] = val;
+    });
+    rows.push(obj);
+  }
+  return rows;
 }
 
 // ── STATE ─────────────────────────────────────────────────────────────────────
@@ -214,17 +243,17 @@ async function loadFromSheets() {
       const res  = await fetch(url);
       if (!res.ok) { lastErr = 'HTTP ' + res.status; continue; }
       const text = await res.text();
-      // Check if response is error HTML (Google returns 200 with HTML for wrong sheet names sometimes)
+      // Check if response is error HTML
       if (text.trim().startsWith('<!')) { lastErr = 'اسم الشيت غلط'; continue; }
-      const parsed = parseCSV(text);
+      let parsed;
+      try { parsed = parseGVizJSON(text); } catch(e) { lastErr = e.message; continue; }
       if (!parsed.length) { lastErr = 'الشيت فاضي'; continue; }
-      if (!parsed[0].hasOwnProperty('BARCODE')) { 
+      if (!parsed[0].hasOwnProperty('BARCODE')) {
         const cols = Object.keys(parsed[0]).join(' | ');
-        lastErr = `مفيش عمود BARCODE — الأعمدة الموجودة: ${cols}`; 
-        continue; 
+        lastErr = `مفيش عمود BARCODE — الأعمدة: ${cols}`;
+        continue;
       }
       rows = parsed;
-      CSV_URL = url;
       break;
     } catch(e) { lastErr = e.message; }
   }
@@ -297,7 +326,14 @@ function parseCSV(text) {
     const cols = splitRow(lines[i]);
     if (cols.every(c => !c)) continue;
     const obj = {};
-    headers.forEach((h, idx) => { obj[h] = cols[idx] !== undefined ? cols[idx] : ''; });
+    headers.forEach((h, idx) => {
+      let val = cols[idx] !== undefined ? cols[idx] : '';
+      // Normalize numeric columns that might be in scientific notation
+      if (h === 'BARCODE' && val && /^[\d.]+[eE][+\-]?\d+$/.test(val)) {
+        try { val = Number(val).toFixed(0); } catch(e) {}
+      }
+      obj[h] = val;
+    });
     rows.push(obj);
   }
   return rows;
@@ -380,12 +416,33 @@ function showSuggestions(q) {
   });
 }
 
+// Normalize barcode value - handle scientific notation from Google Sheets
+function normalizeBarcode(val) {
+  if (!val) return '';
+  val = String(val).trim();
+  // Handle scientific notation e.g. 6.22301E+12
+  if (/^[\d.]+[eE][+\-]?\d+$/.test(val)) {
+    try { val = Number(val).toFixed(0); } catch(e) {}
+  }
+  return val;
+}
+
 function runSearch(barcode) {
   if (!barcode || !allRows.length) return;
-  // Find the row matching this barcode
-  const matchedRow = allRows.find(r => (r['BARCODE'] || '').trim() === barcode.trim());
+
+  const q = normalizeBarcode(barcode);
+
+  // Primary: search BARCODE column (normalize both sides)
+  let matchedRow = allRows.find(r => normalizeBarcode(r['BARCODE']) === q);
+
+  // Fallback: search all columns
   if (!matchedRow) {
-    // Not found
+    matchedRow = allRows.find(r =>
+      Object.values(r).some(v => normalizeBarcode(v) === q)
+    );
+  }
+
+  if (!matchedRow) {
     currentSKU = null;
     activeType = 'All';
     document.querySelectorAll('.filter-pill').forEach(p => {
