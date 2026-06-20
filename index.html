@@ -167,8 +167,17 @@
 // ── CONFIG ────────────────────────────────────────────────────────────────────
 const SHEET_ID = '1066Y4qL4_Ik9ZvLUEn_jicZ9oyWJA2VwA8wl6E7GI-Q';
 // Try multiple possible sheet names in order
-const SHEET_NAMES = ['Serial%20soh', 'Serial%20SOH', 'Serial%20Soh', 'Serial_soh', 'Sheet1', 'serial%20soh'];
-let CSV_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Serial%20soh`;
+const SHEET_NAMES = ['Serial%20soh', 'Serial%20SOH', 'Serial%20Soh', 'serial%20soh', 'Serial%20Soh%20', 'SerialSoh'];
+// Build URL helper - use export format which is more reliable
+function buildUrl(sheetName) {
+  // gid=0 is the first sheet; we use sheet name param for named sheets
+  return `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${sheetName}`;
+}
+
+// Also try direct export as fallback
+function buildExportUrl(gid) {
+  return `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=${gid}`;
+}
 
 // ── STATE ─────────────────────────────────────────────────────────────────────
 let allRows    = [];
@@ -200,7 +209,7 @@ async function loadFromSheets() {
   let lastErr = '';
 
   for (const sheetName of SHEET_NAMES) {
-    const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${sheetName}`;
+    const url = buildUrl(sheetName);
     try {
       const res  = await fetch(url);
       if (!res.ok) { lastErr = 'HTTP ' + res.status; continue; }
@@ -209,7 +218,11 @@ async function loadFromSheets() {
       if (text.trim().startsWith('<!')) { lastErr = 'اسم الشيت غلط'; continue; }
       const parsed = parseCSV(text);
       if (!parsed.length) { lastErr = 'الشيت فاضي'; continue; }
-      if (!parsed[0].hasOwnProperty('BARCODE')) { lastErr = 'مفيش عمود BARCODE'; continue; }
+      if (!parsed[0].hasOwnProperty('BARCODE')) { 
+        const cols = Object.keys(parsed[0]).join(' | ');
+        lastErr = `مفيش عمود BARCODE — الأعمدة الموجودة: ${cols}`; 
+        continue; 
+      }
       rows = parsed;
       CSV_URL = url;
       break;
@@ -240,16 +253,51 @@ async function loadFromSheets() {
 
 // ── CSV PARSE ─────────────────────────────────────────────────────────────────
 function parseCSV(text) {
-  const sep   = (text.match(/\t/g)||[]).length > (text.match(/,/g)||[]).length ? '\t' : ',';
-  const lines = text.replace(/\r/g,'').split('\n').filter(l => l.trim());
+  // Normalize line endings
+  text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  
+  // Split respecting quoted fields
+  function splitRow(line) {
+    const fields = [];
+    let field = '', inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (inQ) {
+        if (ch === '"' && line[i+1] === '"') { field += '"'; i++; }
+        else if (ch === '"') { inQ = false; }
+        else { field += ch; }
+      } else {
+        if (ch === '"') { inQ = true; }
+        else if (ch === ',') { fields.push(field.trim()); field = ''; }
+        else { field += ch; }
+      }
+    }
+    fields.push(field.trim());
+    return fields;
+  }
+
+  // Split into lines respecting quoted newlines
+  const lines = [];
+  let cur = '', inQ = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '"') { inQ = !inQ; cur += ch; }
+    else if (ch === '\n' && !inQ) { if (cur.trim()) lines.push(cur); cur = ''; }
+    else { cur += ch; }
+  }
+  if (cur.trim()) lines.push(cur);
+
   if (lines.length < 2) return [];
-  const headers = lines[0].split(sep).map(h => h.trim().replace(/^"|"$/g,''));
+
+  const headers = splitRow(lines[0]);
+  if (!headers.length || headers.every(h => !h)) return [];
+
   const rows = [];
   for (let i = 1; i < lines.length; i++) {
-    const cols = lines[i].split(sep).map(c => c.trim().replace(/^"|"$/g,''));
-    if (cols.length < 4) continue;
+    const cols = splitRow(lines[i]);
+    if (cols.every(c => !c)) continue;
     const obj = {};
-    headers.forEach((h,idx) => { obj[h] = cols[idx] !== undefined ? cols[idx] : ''; });
+    headers.forEach((h, idx) => { obj[h] = cols[idx] !== undefined ? cols[idx] : ''; });
     rows.push(obj);
   }
   return rows;
@@ -262,10 +310,9 @@ skuInput.addEventListener('input', function() {
   const q = this.value.trim();
   clearBtn.style.display = q ? 'block' : 'none';
   if (!q || !allRows.length) { suggestBox.style.display = 'none'; return; }
-  // Auto-submit after brief pause (barcode scanners type fast then stop)
+  // Reset timer on every keystroke — fires only after typing stops
   clearTimeout(scanTimer);
   scanTimer = setTimeout(() => {
-    // If exact barcode match exists, auto-run without needing Enter
     const exactMatch = allRows.find(r => (r['BARCODE'] || '').trim() === q);
     if (exactMatch) {
       suggestBox.style.display = 'none';
@@ -274,11 +321,16 @@ skuInput.addEventListener('input', function() {
     }
     clearTimeout(suggTimer);
     suggTimer = setTimeout(() => showSuggestions(q), 0);
-  }, 300);
+  }, 500); // 500ms — enough time for scanner to finish sending all chars
 });
 
-skuInput.addEventListener('keydown', function(e) {
-  if (e.key === 'Enter') { clearTimeout(scanTimer); suggestBox.style.display = 'none'; runSearch(this.value.trim()); }
+// Use keyup so the value is fully updated before we read it
+skuInput.addEventListener('keyup', function(e) {
+  if (e.key === 'Enter') {
+    clearTimeout(scanTimer);
+    suggestBox.style.display = 'none';
+    runSearch(this.value.trim());
+  }
   if (e.key === 'Escape') suggestBox.style.display = 'none';
 });
 
