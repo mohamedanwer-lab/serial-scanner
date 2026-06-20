@@ -167,7 +167,7 @@
 // ── CONFIG ────────────────────────────────────────────────────────────────────
 const SHEET_ID = '1066Y4qL4_Ik9ZvLUEn_jicZ9oyWJA2VwA8wl6E7GI-Q';
 // Try multiple possible sheet names in order
-const SHEET_NAMES = ['Serial%20soh', 'Serial%20SOH', 'Serial%20Soh', 'Serial_soh', 'Sheet1', 'serial%20soh'];
+const SHEET_NAMES = ['Serial%20soh', 'Serial%20SOH', 'Serial%20Soh', 'serial%20soh', 'Serial%20Soh%20', 'SerialSoh'];
 let CSV_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Serial%20soh`;
 
 // ── STATE ─────────────────────────────────────────────────────────────────────
@@ -209,7 +209,11 @@ async function loadFromSheets() {
       if (text.trim().startsWith('<!')) { lastErr = 'اسم الشيت غلط'; continue; }
       const parsed = parseCSV(text);
       if (!parsed.length) { lastErr = 'الشيت فاضي'; continue; }
-      if (!parsed[0].hasOwnProperty('BARCODE')) { lastErr = 'مفيش عمود BARCODE'; continue; }
+      if (!parsed[0].hasOwnProperty('BARCODE')) { 
+        const cols = Object.keys(parsed[0]).join(' | ');
+        lastErr = `مفيش عمود BARCODE — الأعمدة الموجودة: ${cols}`; 
+        continue; 
+      }
       rows = parsed;
       CSV_URL = url;
       break;
@@ -240,16 +244,44 @@ async function loadFromSheets() {
 
 // ── CSV PARSE ─────────────────────────────────────────────────────────────────
 function parseCSV(text) {
-  const sep   = (text.match(/\t/g)||[]).length > (text.match(/,/g)||[]).length ? '\t' : ',';
-  const lines = text.replace(/\r/g,'').split('\n').filter(l => l.trim());
-  if (lines.length < 2) return [];
-  const headers = lines[0].split(sep).map(h => h.trim().replace(/^"|"$/g,''));
+  text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const lines = [];
+  let cur = '', inQ = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '"') {
+      if (inQ && text[i+1] === '"') { cur += '"'; i++; }
+      else inQ = !inQ;
+    } else if (ch === '\n' && !inQ) {
+      lines.push(cur); cur = ''; 
+    } else { cur += ch; }
+  }
+  if (cur.trim()) lines.push(cur);
+
+  const nonEmpty = lines.filter(l => l.trim());
+  if (nonEmpty.length < 2) return [];
+
+  function splitRow(line) {
+    const fields = []; let field = '', q = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') {
+        if (q && line[i+1] === '"') { field += '"'; i++; }
+        else q = !q;
+      } else if (ch === ',' && !q) { fields.push(field); field = ''; }
+      else field += ch;
+    }
+    fields.push(field);
+    return fields.map(f => f.trim());
+  }
+
+  const headers = splitRow(nonEmpty[0]);
   const rows = [];
-  for (let i = 1; i < lines.length; i++) {
-    const cols = lines[i].split(sep).map(c => c.trim().replace(/^"|"$/g,''));
-    if (cols.length < 4) continue;
+  for (let i = 1; i < nonEmpty.length; i++) {
+    const cols = splitRow(nonEmpty[i]);
+    if (cols.length < 2) continue;
     const obj = {};
-    headers.forEach((h,idx) => { obj[h] = cols[idx] !== undefined ? cols[idx] : ''; });
+    headers.forEach((h, idx) => { obj[h] = cols[idx] !== undefined ? cols[idx] : ''; });
     rows.push(obj);
   }
   return rows;
