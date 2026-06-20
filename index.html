@@ -168,7 +168,9 @@
 <script>
 // ── CONFIG ────────────────────────────────────────────────────────────────────
 const SHEET_ID = '1066Y4qL4_Ik9ZvLUEn_jicZ9oyWJA2VwA8wl6E7GI-Q';
-const CSV_URL  = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Serial soh`;
+// Try multiple possible sheet names in order
+const SHEET_NAMES = ['Serial%20soh', 'Serial%20SOH', 'Serial%20Soh', 'Serial_soh', 'Sheet1', 'serial%20soh'];
+let CSV_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Serial%20soh`;
 
 // ── STATE ─────────────────────────────────────────────────────────────────────
 let allRows    = [];
@@ -196,15 +198,28 @@ async function loadFromSheets() {
   syncIcon.classList.add('spinning');
   skuInput.disabled = true;
 
-  try {
-    const res  = await fetch(CSV_URL);
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const text = await res.text();
-    const rows = parseCSV(text);
+  let rows = [];
+  let lastErr = '';
 
-    if (!rows.length || !rows[0].hasOwnProperty('BARCODE')) {
-      throw new Error('تأكد إن الشيت Public وفيه عمود BARCODE');
-    }
+  for (const sheetName of SHEET_NAMES) {
+    const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${sheetName}`;
+    try {
+      const res  = await fetch(url);
+      if (!res.ok) { lastErr = 'HTTP ' + res.status; continue; }
+      const text = await res.text();
+      // Check if response is error HTML (Google returns 200 with HTML for wrong sheet names sometimes)
+      if (text.trim().startsWith('<!')) { lastErr = 'اسم الشيت غلط'; continue; }
+      const parsed = parseCSV(text);
+      if (!parsed.length) { lastErr = 'الشيت فاضي'; continue; }
+      if (!parsed[0].hasOwnProperty('BARCODE')) { lastErr = 'مفيش عمود BARCODE'; continue; }
+      rows = parsed;
+      CSV_URL = url;
+      break;
+    } catch(e) { lastErr = e.message; }
+  }
+
+  try {
+    if (!rows.length) throw new Error(lastErr || 'مش قادر يوصل للشيت');
 
     allRows = rows;
     const uniq = new Set(rows.map(r => r['BARCODE']).filter(Boolean)).size;
@@ -218,7 +233,7 @@ async function loadFromSheets() {
     }
   } catch (err) {
     setStatus('خطأ: ' + err.message, 'error');
-    setGrid(`<div class="empty-state"><i class="ti ti-wifi-off"></i><h3>مش قادر يجيب البيانات</h3><p>${escHtml(err.message)}</p></div>`);
+    setGrid(`<div class="empty-state"><i class="ti ti-wifi-off"></i><h3>مش قادر يجيب البيانات</h3><p>${escHtml(err.message)}</p><p style="font-size:11px;margin-top:8px;color:var(--text-hint)">تأكد إن الشيت Public وإن اسم الـ tab صح</p></div>`);
   } finally {
     syncBtn.classList.remove('loading');
     syncIcon.classList.remove('spinning');
